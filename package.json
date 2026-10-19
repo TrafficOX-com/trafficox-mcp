@@ -1,0 +1,40 @@
+{
+  "name": "@trafficox/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for the TrafficOX API — stats, orders, RTB feeds, domain filters and conversion trackers for AI assistants",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "trafficox-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run typecheck && pnpm test && pnpm run build"
+  },
+  "keywords": [
+    "mcp",
+    "trafficox",
+    "rtb",
+    "advertising"
+  ],
+  "packageManager": "pnpm@10.14.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}
