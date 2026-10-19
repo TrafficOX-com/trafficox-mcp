@@ -2,7 +2,7 @@
   "name": "@trafficox/mcp",
   "version": "0.1.0",
   "description": "MCP server for the TrafficOX API \u2014 stats, orders, RTB feeds, domain filters and conversion trackers for AI assistants",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "trafficox-mcp": "dist/index.js"
