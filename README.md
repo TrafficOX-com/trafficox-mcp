@@ -55,7 +55,7 @@ claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @traffic
 
 **Orders** (`format`: popunder | sticker, `side`: buy | sell)
 - `list_orders`, `get_order`
-- `get_order_stats` — group by country, category, browser, isp, platform, domain, day, hour or sub_id, with filters and an optional second-level breakdown
+- `get_order_stats` — group by country, category, browser, isp, platform, domain, day, hour or sub_id, with filters and an optional second-level breakdown. Conversions are counted by the time they were received, traffic and spend by the time of the click, so the numbers match your conversion tracker for the same period
 - `get_sub_id_report` — sell earnings by sub_id_1..3, cursor-paginated
 
 **RTB**

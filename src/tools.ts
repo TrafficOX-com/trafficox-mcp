@@ -149,6 +149,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       description: [
         "Statistics of one buy or sell order grouped by a dimension.",
         "Buy rows: hits, unique, desktop, mobile, spent, cpm, conversions, cost_per_conversion, conversion_rate, conversion_revenue, winrate, profit.",
+        "conversions and conversion_revenue are dated by when the conversion was received (UTC), like tracker stats and list_conversion_events, while traffic and spend are dated by the click — so a day or hour can show conversions from earlier clicks, conversion_rate above 100, or conversions with 0 hits.",
         "Sell rows: total, unique, sold, sent_back, earned, cpm.",
         "group_by=sub_id is sell-only; group_by=domain is not available for sticker sell orders.",
         "subdimension adds a nested `sub` breakdown to every row (must differ from group_by).",
