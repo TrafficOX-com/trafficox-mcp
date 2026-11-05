@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ApiError, TrafficoxClient } from "./client.js";
+import { normalize } from "./normalize.js";
 import { fitResponse } from "./shape.js";
 
 const format = z.enum(["popunder", "sticker"]).describe("Ad format");
@@ -13,11 +14,13 @@ const strings = (what: string) => z.array(z.string()).optional().describe(what);
 
 const dateNote =
   "RFC3339 (`2026-01-15T00:00:00Z`) or `2026-01-15`, UTC. Defaults to today. Max range 60 days, max lookback 90 days.";
+const dateEndNote =
+  "Inclusive: a date (`2026-01-15`) covers that whole day UTC; a time with seconds (`…T23:59:59Z`) includes that second.";
 
 // Body fields shared by every stats endpoint. Values for countries/categories/os/browsers come from get_filter_values.
 const statsFilters = {
   date_start: z.string().optional().describe(`Range start. ${dateNote}`),
-  date_end: z.string().optional().describe(`Range end. ${dateNote}`),
+  date_end: z.string().optional().describe(`Range end. ${dateEndNote} ${dateNote}`),
   countries: strings("ISO country codes, e.g. [\"US\", \"DE\"]"),
   categories: strings("Traffic categories"),
   desktop_os: strings("Desktop OS names"),
@@ -29,7 +32,16 @@ const statsFilters = {
   platform: z.enum(["desktop", "mobile"]).optional(),
 };
 
-const subSize = z.number().int().min(1).max(100).optional().describe("Sub-rows per row (default 20, max 100)");
+const subSize = z
+  .number()
+  .int()
+  .min(1)
+  .max(1000)
+  .optional()
+  .describe("Sub-rows per row (default 20, max 1000); ignored for day/hour, which return every day/hour of the range");
+
+const subdimensionNote =
+  "subdimension adds a nested `sub` breakdown to every row (must differ from group_by; day/hour are not allowed with group_by=day/hour). Too large a breakdown (rows × sub-rows over the bucket limit) is rejected — shorten the range or lower sub_size.";
 
 // group_by value → path segment, per endpoint family.
 const ORDER_GROUPS = {
@@ -57,6 +69,12 @@ const RTB_GROUPS = {
 
 const READ = { readOnlyHint: true, openWorldHint: true } as const;
 
+const TIME_BY_TIME = "day/hour subdimension needs a non-time group_by (e.g. group_by=country, subdimension=day).";
+
+function isTimeBreakdownOfTime(groupBy: string, subdimension: string | undefined) {
+  return (groupBy === "day" || groupBy === "hour") && (subdimension === "day" || subdimension === "hour");
+}
+
 type Body = Record<string, unknown>;
 
 function compact(obj: Body): Body {
@@ -64,7 +82,7 @@ function compact(obj: Body): Body {
 }
 
 function ok(data: unknown): CallToolResult {
-  return { content: [{ type: "text", text: fitResponse(data) }] };
+  return { content: [{ type: "text", text: fitResponse(normalize(data)) }] };
 }
 
 function fail(message: string): CallToolResult {
@@ -89,10 +107,14 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     "get_account",
     {
       title: "Account",
-      description: "Current TrafficOX account: email, name, balance (USD).",
+      description: "Current TrafficOX account: email, username, balance (USD).",
       annotations: READ,
     },
-    () => run(() => api.get("/v1/me")),
+    () =>
+      run(async () => {
+        const me = (await api.get("/v1/me")) as Record<string, unknown>;
+        return { email: me.email, username: me.username, balance: me.balance };
+      }),
   );
 
   server.registerTool(
@@ -152,7 +174,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         "conversions and conversion_revenue are dated by when the conversion was received (UTC), like tracker stats and list_conversion_events, while traffic and spend are dated by the click — so a day or hour can show conversions from earlier clicks, conversion_rate above 100, or conversions with 0 hits.",
         "Sell rows: total, unique, sold, sent_back, earned, cpm.",
         "group_by=sub_id is sell-only; group_by=domain is not available for sticker sell orders.",
-        "subdimension adds a nested `sub` breakdown to every row (must differ from group_by).",
+        subdimensionNote,
         "from/size/order_field/order_direction paginate sell orders only; buy orders return up to 1000 rows.",
       ].join(" "),
       inputSchema: {
@@ -162,7 +184,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         group_by: z.enum(Object.keys(ORDER_GROUPS) as [keyof typeof ORDER_GROUPS]),
         ...statsFilters,
         subdimension: z
-          .enum(["country", "platform", "isp", "source_domain", "sub_id"])
+          .enum(["country", "platform", "isp", "source_domain", "sub_id", "day", "hour"])
           .optional()
           .describe("Second-level breakdown; sub_id is sell-only"),
         sub_size: subSize,
@@ -181,6 +203,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       if (sd === "sell" && fmt === "sticker" && group_by === "domain") {
         return fail("Sticker sell orders have no domain breakdown.");
       }
+      if (isTimeBreakdownOfTime(group_by, rest.subdimension)) return fail(TIME_BY_TIME);
       if (sd === "buy") {
         delete rest.from;
         delete rest.size;
@@ -250,7 +273,8 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       description: [
         "RTB statistics grouped by a dimension — for the whole account, or for one feed when feed_id is given.",
         "Terms groupings return 10 rows unless `size` is set.",
-        "subdimension adds a nested `sub` breakdown to every row (must differ from group_by); `feed` splits rows per RTB feed.",
+        subdimensionNote,
+        "`feed` splits rows per RTB feed (popunder account-level only).",
       ].join(" "),
       inputSchema: {
         format,
@@ -259,13 +283,14 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         ...statsFilters,
         from: z.number().int().min(0).optional().describe("Row offset"),
         size: z.number().int().min(1).max(1000).optional().describe("Rows per page (default 10)"),
-        subdimension: z.enum(["country", "platform", "isp", "source_domain", "feed"]).optional(),
+        subdimension: z.enum(["country", "platform", "isp", "source_domain", "feed", "day", "hour"]).optional(),
         sub_size: subSize,
       },
       annotations: READ,
     },
     (a) => {
       const { format: fmt, group_by, feed_id, ...rest } = a;
+      if (isTimeBreakdownOfTime(group_by, rest.subdimension)) return fail(TIME_BY_TIME);
       const segment = RTB_GROUPS[group_by];
       let path: string;
       if (feed_id) path = `/v1/${fmt}/rtb_feeds/${enc(feed_id)}/stats/${segment}`;

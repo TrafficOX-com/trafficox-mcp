@@ -1,6 +1,6 @@
 {
   "name": "@trafficox/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for the TrafficOX API \u2014 stats, orders, RTB feeds, domain filters and conversion trackers for AI assistants",
   "license": "MIT",
   "type": "module",
