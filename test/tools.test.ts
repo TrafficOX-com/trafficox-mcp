@@ -52,11 +52,32 @@ describe("transport", () => {
     expect(last().url.search).toBe("?list_type=blacklist&page=2");
   });
 
-  it("returns the API response body as the tool result", async () => {
-    reply = { status: 200, body: { email: "a@b.c", balance: 2 } };
-    const res = await call("get_account");
+  it("wraps the API response body in `data`", async () => {
+    reply = { status: 200, body: [{ id: "1", name: "Order" }] };
+    const res = await call("list_orders", { format: "popunder", side: "buy" });
     expect(res.isError).toBe(false);
-    expect(JSON.parse(res.text)).toEqual({ email: "a@b.c", balance: 2 });
+    expect(JSON.parse(res.text)).toEqual({ data: [{ id: "1", name: "Order" }] });
+  });
+
+  it("returns only email, username and balance from /v1/me", async () => {
+    reply = {
+      status: 200,
+      body: { email: "a@b.c", username: "bob", balance: 2487.6403600000003, default_state: "trusted", landing_code: "X" },
+    };
+    const res = await call("get_account");
+    expect(JSON.parse(res.text)).toEqual({ data: { email: "a@b.c", username: "bob", balance: 2487.64 } });
+  });
+
+  it("normalizes stats responses (ISO dates, empty rows dropped, rounding)", async () => {
+    reply = {
+      status: 200,
+      body: {
+        "October 30, 2026": { hits: 10, spent: 476.271269872, cpm: 47.62712698 },
+        "October 31, 2026": { hits: 0, spent: 0, cpm: 0 },
+      },
+    };
+    const res = await call("get_order_stats", { format: "popunder", side: "buy", id: "a", group_by: "day" });
+    expect(JSON.parse(res.text)).toEqual({ data: { "2026-10-30": { hits: 10, spent: 476.27, cpm: 47.6271 } } });
   });
 
   it("returns API errors as tool errors", async () => {
@@ -131,6 +152,27 @@ describe("orders", () => {
     });
     expect(sub.isError).toBe(true);
     expect(calls).toHaveLength(0);
+  });
+
+  it("rejects a day/hour breakdown of a day/hour grouping without calling the API", async () => {
+    const order = await call("get_order_stats", {
+      format: "popunder",
+      side: "sell",
+      id: "a",
+      group_by: "day",
+      subdimension: "hour",
+    });
+    expect(order.isError).toBe(true);
+    const rtb = await call("get_rtb_stats", { format: "sticker", group_by: "hour", subdimension: "day" });
+    expect(rtb.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("passes day/hour subdimension and large sub_size through", async () => {
+    await call("get_rtb_stats", { format: "popunder", group_by: "country", subdimension: "day", sub_size: 1000 });
+    expect(last().body).toEqual({ subdimension: "day", sub_size: 1000 });
+    await call("get_order_stats", { format: "sticker", side: "buy", id: "a", group_by: "country", subdimension: "hour" });
+    expect(last().body).toEqual({ subdimension: "hour" });
   });
 
   it("rejects domain stats on sticker sell orders", async () => {

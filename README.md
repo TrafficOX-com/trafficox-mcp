@@ -20,7 +20,7 @@ Settings → Developer → Edit Config, add to `claude_desktop_config.json`:
   "mcpServers": {
     "trafficox": {
       "command": "npx",
-      "args": ["-y", "@trafficox/mcp"],
+      "args": ["-y", "@trafficox/mcp@0.2.0"],
       "env": { "TRAFFICOX_API_KEY": "your-api-key" }
     }
   }
@@ -32,12 +32,14 @@ Restart Claude Desktop.
 ### Claude Code
 
 ```bash
-claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp
+claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.2.0
 ```
 
 ### Cursor
 
 `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project) — the same block as for Claude Desktop.
+
+The version is pinned on purpose: your client runs exactly the release you reviewed, not whatever is published later. To upgrade, change the version in the config ([versions on npm](https://www.npmjs.com/package/@trafficox/mcp?activeTab=versions)).
 
 ### Environment
 
@@ -49,7 +51,7 @@ claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @traffic
 ## Tools
 
 **Account**
-- `get_account` — email, name, balance
+- `get_account` — email, username, balance
 - `get_balance_stats` — daily earned/spent
 - `get_filter_values` — valid countries, categories, OS, browsers for filters
 
@@ -75,9 +77,24 @@ claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @traffic
 
 Bid prices and other order settings are changed in the dashboard only.
 
+## Response format
+
+Every tool returns JSON with the API data under `data`:
+
+```json
+{ "data": { "2026-10-30": { "hits": 378241, "spent": 476.27, "cpm": 1.2592 } } }
+```
+
+- Dates are ISO and UTC: `2026-10-30`, hours `2026-10-30T13:00:00Z`.
+- Rows exist only where there is data; an empty period returns `{}` (or `[]`).
+- Ratios with a zero denominator (`cpm`, `cpc`, cost per conversion/click) are `0`.
+- Money totals are rounded to cents; `cpm`, `cpc`, cost-per and payout values to 4 decimals.
+- If a response is too large for the assistant's context, rows are cut and a separate field says so:
+  `{ "data": { … }, "truncated": { "shown": 556, "total": 1000, "hint": "…" } }`.
+
 ## Limits
 
-Stats requests cover at most 60 days, no more than 90 days back; dates are UTC and default to today. Very large stats responses are trimmed to fit the assistant's context, and the response says how many rows were left out.
+Stats requests cover at most 60 days, no more than 90 days back; dates are UTC and default to today. `date_end` is inclusive: `2026-10-30` means the whole day. A breakdown (`subdimension`) returns up to 1000 sub-rows per row (`day`/`hour` return every day/hour); a breakdown too large for one request is rejected with a hint to shorten the range.
 
 ## Development
 
