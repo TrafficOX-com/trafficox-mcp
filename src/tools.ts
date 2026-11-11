@@ -42,6 +42,8 @@ const subSize = z
 
 const subdimensionNote =
   "subdimension adds a nested `sub` breakdown to every row (must differ from group_by; day/hour are not allowed with group_by=day/hour). Too large a breakdown (rows × sub-rows over the bucket limit) is rejected — shorten the range or lower sub_size.";
+const domainIdNote =
+  "Rows keyed by source domain (group_by=domain, or sub rows of subdimension=source_domain) carry domain_id_numeric: the numeric domain ID that the {domain_id_numeric} URL macro sends, null for an unregistered source — use it to match these stats with a tracker that received that macro.";
 
 // group_by value → path segment, per endpoint family.
 const ORDER_GROUPS = {
@@ -175,6 +177,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         "Sell rows: total, unique, sold, sent_back, earned, cpm.",
         "group_by=sub_id is sell-only; group_by=domain is not available for sticker sell orders.",
         subdimensionNote,
+        domainIdNote,
         "from/size/order_field/order_direction paginate sell orders only; buy orders return up to 1000 rows.",
       ].join(" "),
       inputSchema: {
@@ -274,6 +277,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         "RTB statistics grouped by a dimension — for the whole account, or for one feed when feed_id is given.",
         "Terms groupings return 10 rows unless `size` is set.",
         subdimensionNote,
+        domainIdNote,
         "`feed` splits rows per RTB feed (popunder account-level only).",
       ].join(" "),
       inputSchema: {

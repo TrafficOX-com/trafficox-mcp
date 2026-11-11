@@ -73,11 +73,14 @@ function isDatedRow(v: Json): boolean {
   return !!v && typeof v === "object" && !Array.isArray(v) && typeof v.date === "string";
 }
 
-// A row is empty when every number in it (nested `sub`, `by_format` …) is 0 or null.
+// Identifiers label a row; they are not data, so they never keep an empty row alive.
+const IDENTIFIER = new Set(["domain_id_numeric"]);
+
+// A row is empty when every metric in it (nested `sub`, `by_format` …) is 0 or null.
 function isEmpty(v: Json): boolean {
   if (v === null) return true;
   if (typeof v === "number") return v === 0;
   if (typeof v === "string" || typeof v === "boolean") return true;
   if (Array.isArray(v)) return v.every(isEmpty);
-  return Object.values(v).every(isEmpty);
+  return Object.entries(v).every(([key, field]) => IDENTIFIER.has(key) || isEmpty(field));
 }
