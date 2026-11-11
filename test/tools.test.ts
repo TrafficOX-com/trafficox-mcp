@@ -249,4 +249,25 @@ describe("tool list", () => {
     ]);
     expect(tools).toHaveLength(20);
   });
+
+  it("tells the model where domain_id_numeric comes from on both stats tools", async () => {
+    const { tools } = await client.listTools();
+    for (const name of ["get_order_stats", "get_rtb_stats"]) {
+      expect(tools.find((t) => t.name === name)?.description).toContain("{domain_id_numeric} URL macro");
+    }
+  });
+});
+
+describe("domain_id_numeric", () => {
+  it("passes the id through on domain rows and source_domain sub rows", async () => {
+    reply = {
+      status: 200,
+      body: {
+        "a.com": { hits: 2, domain_id_numeric: 100123 },
+        "b.com": { hits: 1, domain_id_numeric: null, sub: { US: { hits: 1 } } },
+      },
+    };
+    const res = await call("get_order_stats", { format: "popunder", side: "buy", id: "x", group_by: "domain" });
+    expect(JSON.parse(res.text).data).toEqual(reply.body);
+  });
 });

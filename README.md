@@ -20,7 +20,7 @@ Settings → Developer → Edit Config, add to `claude_desktop_config.json`:
   "mcpServers": {
     "trafficox": {
       "command": "npx",
-      "args": ["-y", "@trafficox/mcp@0.2.0"],
+      "args": ["-y", "@trafficox/mcp@0.3.0"],
       "env": { "TRAFFICOX_API_KEY": "your-api-key" }
     }
   }
@@ -32,7 +32,7 @@ Restart Claude Desktop.
 ### Claude Code
 
 ```bash
-claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.2.0
+claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.3.0
 ```
 
 ### Cursor
@@ -89,6 +89,7 @@ Every tool returns JSON with the API data under `data`:
 - Rows exist only where there is data; an empty period returns `{}` (or `[]`).
 - Ratios with a zero denominator (`cpm`, `cpc`, cost per conversion/click) are `0`.
 - Money totals are rounded to cents; `cpm`, `cpc`, cost-per and payout values to 4 decimals.
+- Rows keyed by source domain carry `domain_id_numeric`, the value the `{domain_id_numeric}` URL macro sends (`null` for an unregistered source), so stats can be matched with your tracker.
 - If a response is too large for the assistant's context, rows are cut and a separate field says so:
   `{ "data": { … }, "truncated": { "shown": 556, "total": 1000, "hint": "…" } }`.
 

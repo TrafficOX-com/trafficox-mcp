@@ -45,6 +45,14 @@ describe("normalize", () => {
     expect(out).toEqual({ US: { hits: 3, sub: { "2026-10-30": { hits: 3 } } } });
   });
 
+  it("does not let a domain id keep an empty day alive", () => {
+    const out = normalize({
+      "October 30, 2026": { hits: 0, sub: { "a.com": { hits: 0, domain_id_numeric: 100123 } } },
+      "October 31, 2026": { hits: 1, sub: { "a.com": { hits: 1, domain_id_numeric: 100123 } } },
+    });
+    expect(out).toEqual({ "2026-10-31": { hits: 1, sub: { "a.com": { hits: 1, domain_id_numeric: 100123 } } } });
+  });
+
   it("does not drop zero rows from non-date maps", () => {
     expect(normalize({ US: { hits: 0 } })).toEqual({ US: { hits: 0 } });
   });
