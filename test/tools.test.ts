@@ -247,7 +247,7 @@ describe("tool list", () => {
       "set_buy_order_state",
       "set_rtb_feed_state",
     ]);
-    expect(tools).toHaveLength(20);
+    expect(tools).toHaveLength(21);
   });
 
   it("tells the model where domain_id_numeric comes from on both stats tools", async () => {
@@ -269,5 +269,60 @@ describe("domain_id_numeric", () => {
     };
     const res = await call("get_order_stats", { format: "popunder", side: "buy", id: "x", group_by: "domain" });
     expect(JSON.parse(res.text).data).toEqual(reply.body);
+  });
+});
+
+describe("account stats", () => {
+  it("posts buy totals to /{format}/buy_stats and drops sell-only pagination", async () => {
+    await call("get_account_stats", { format: "popunder", side: "buy", group_by: "day", size: 10, event_types: ["ftd"] });
+    expect(last().url.pathname).toBe("/api/v1/popunder/buy_stats/daily");
+    expect(last().body).toEqual({ event_types: ["ftd"] });
+  });
+
+  it("maps group_by=order to the per-order breakdown of each side", async () => {
+    await call("get_account_stats", { format: "sticker", side: "sell", group_by: "order", from: 0, size: 50 });
+    expect(last().url.pathname).toBe("/api/v1/sticker/sell_stats/sell_orders");
+    expect(last().body).toEqual({ from: 0, size: 50 });
+    await call("get_account_stats", { format: "popunder", side: "buy", group_by: "order" });
+    expect(last().url.pathname).toBe("/api/v1/popunder/buy_stats/buy_orders");
+  });
+
+  it("sends subdimension=order as the side's own value", async () => {
+    await call("get_account_stats", { format: "popunder", side: "buy", group_by: "day", subdimension: "order" });
+    expect(last().body).toEqual({ subdimension: "buy_order" });
+    await call("get_account_stats", { format: "popunder", side: "sell", group_by: "day", subdimension: "order" });
+    expect(last().body).toEqual({ subdimension: "sell_order" });
+  });
+
+  it("rejects combinations the API refuses without calling it", async () => {
+    for (const args of [
+      { format: "popunder", side: "sell", group_by: "day", event_types: ["ftd"] },
+      { format: "popunder", side: "buy", group_by: "country", subdimension: "sub_id" },
+      { format: "popunder", side: "buy", group_by: "order", subdimension: "order" },
+      { format: "popunder", side: "buy", group_by: "day", subdimension: "hour" },
+    ]) {
+      expect((await call("get_account_stats", args)).isError).toBe(true);
+    }
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("conversion types", () => {
+  it("passes event_types to buy order stats", async () => {
+    await call("get_order_stats", { format: "popunder", side: "buy", id: "a", group_by: "day", event_types: ["ftd", "untyped"] });
+    expect(last().body).toEqual({ event_types: ["ftd", "untyped"] });
+  });
+
+  it("rejects event_types on sell order stats without calling the API", async () => {
+    const res = await call("get_order_stats", { format: "popunder", side: "sell", id: "a", group_by: "day", event_types: ["ftd"] });
+    expect(res.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("tells the model about conversions_by_type on both buy stats tools", async () => {
+    const { tools } = await client.listTools();
+    for (const name of ["get_order_stats", "get_account_stats"]) {
+      expect(tools.find((t) => t.name === name)?.description).toContain("conversions_by_type");
+    }
   });
 });

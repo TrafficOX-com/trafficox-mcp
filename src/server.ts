@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TrafficoxClient } from "./client.js";
 import { registerTools } from "./tools.js";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 export function createServer(api: TrafficoxClient): McpServer {
   const server = new McpServer(
