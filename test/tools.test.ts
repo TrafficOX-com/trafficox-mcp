@@ -95,6 +95,15 @@ describe("transport", () => {
     expect(res.text).toContain("countries must be an array");
   });
 
+  it("filters conversion events by the statuses the consumer writes", async () => {
+    await call("list_conversion_events", { id: "t1", status: "invalid_click" });
+    expect(last().url.search).toBe("?status=invalid_click");
+    for (const status of ["invalid_visitor", "out_of_window", "rejected"]) {
+      const res = await call("list_conversion_events", { id: "t1", status });
+      expect(res.isError).toBe(true);
+    }
+  });
+
   it("URL-encodes ids", async () => {
     await call("get_domain_filter", { id: "../v1/me" });
     expect(last().url.pathname).toBe("/api/v1/domain_filters/..%2Fv1%2Fme");
