@@ -368,7 +368,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         per_page: z.number().int().min(1).max(100).optional().describe("Default 50, max 100"),
         visitor_id: z.string().optional(),
         event_type: z.enum(["install", "sale", "signup", "lead", "addr"]).optional(),
-        status: z.enum(["accepted", "duplicate", "invalid_visitor", "out_of_window", "rejected"]).optional(),
+        status: z.enum(["accepted", "duplicate", "invalid_click"]).optional(),
       },
       annotations: READ,
     },
