@@ -45,6 +45,16 @@ const subdimensionNote =
 const domainIdNote =
   "Rows keyed by source domain (group_by=domain, or sub rows of subdimension=source_domain) carry domain_id_numeric: the numeric domain ID that the {domain_id_numeric} URL macro sends, null for an unregistered source — use it to match these stats with a tracker that received that macro.";
 
+const eventTypes = z
+  .array(z.string().regex(/^[a-z0-9_-]{1,32}$/))
+  .max(20)
+  .optional()
+  .describe(
+    "Buy only: count only conversions of these event types (e.g. [\"ftd\"]); `untyped` = conversions received without a type. Omit for all types.",
+  );
+const conversionTypesNote =
+  "Buy rows also carry conversions_by_type ({type: {conversions, conversion_revenue}}): signups, FTDs and sales are otherwise summed in one conversions number. Pass event_types (e.g. [\"ftd\"]) to compute conversions, conversion_revenue, cost_per_conversion, conversion_rate and profit from those types only; `untyped` = conversions received without a type.";
+
 // group_by value → path segment, per endpoint family.
 const ORDER_GROUPS = {
   country: "countries",
@@ -68,6 +78,21 @@ const RTB_GROUPS = {
   day: "daily",
   hour: "hourly",
 } as const;
+
+// group_by value → path segment of /v1/{format}/{side}_stats; `order` is the per-order breakdown.
+const ACCOUNT_GROUPS = {
+  country: "countries",
+  category: "categories",
+  browser: "browsers",
+  isp: "isp",
+  platform: "platform",
+  domain: "domain",
+  order: "orders",
+  day: "daily",
+  hour: "hourly",
+} as const;
+
+const EVENT_TYPES_BUY_ONLY = "event_types filters buy conversions; sell statistics have none.";
 
 const READ = { readOnlyHint: true, openWorldHint: true } as const;
 
@@ -176,9 +201,11 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         "conversions and conversion_revenue are dated by when the conversion was received (UTC), like tracker stats and list_conversion_events, while traffic and spend are dated by the click — so a day or hour can show conversions from earlier clicks, conversion_rate above 100, or conversions with 0 hits.",
         "Sell rows: total, unique, sold, sent_back, earned, cpm.",
         "group_by=sub_id is sell-only; group_by=domain is not available for sticker sell orders.",
+        conversionTypesNote,
         subdimensionNote,
         domainIdNote,
         "from/size/order_field/order_direction paginate sell orders only; buy orders return up to 1000 rows.",
+        "For totals over all orders of the account use get_account_stats instead of calling this per order.",
       ].join(" "),
       inputSchema: {
         format,
@@ -195,6 +222,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         size: z.number().int().min(1).max(1000).optional().describe("Sell only: rows per page (default 50)"),
         order_field: z.string().optional().describe("Sell only: earned, sold, hits, cpm or _key"),
         order_direction: z.enum(["asc", "desc"]).optional().describe("Sell only"),
+        event_types: eventTypes,
       },
       annotations: READ,
     },
@@ -203,6 +231,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       if (sd === "buy" && (group_by === "sub_id" || rest.subdimension === "sub_id")) {
         return fail("sub_id grouping is available for sell orders only.");
       }
+      if (sd === "sell" && rest.event_types) return fail(EVENT_TYPES_BUY_ONLY);
       if (sd === "sell" && fmt === "sticker" && group_by === "domain") {
         return fail("Sticker sell orders have no domain breakdown.");
       }
@@ -216,6 +245,56 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       return run(() =>
         api.post(`/v1/${fmt}/${sd}_orders/${enc(orderId)}/stats/${ORDER_GROUPS[group_by]}`, compact(rest)),
       );
+    },
+  );
+
+  server.registerTool(
+    "get_account_stats",
+    {
+      title: "Account statistics (all orders)",
+      description: [
+        "Statistics summed over ALL buy or sell orders of one format in the account, grouped by a dimension — one call instead of one get_order_stats per order; the same numbers as the panel's Total Buy / Total Sell Stats.",
+        "Rows have the same fields as get_order_stats. group_by=order gives one row per order, keyed by the order `id`, with id_numeric and name.",
+        "subdimension=order splits every row by order, e.g. group_by=day + subdimension=order = each day per order.",
+        "Buy totals count buy-order purchases only; RTB feed purchases are in get_rtb_stats.",
+        conversionTypesNote,
+        subdimensionNote,
+        domainIdNote,
+        "from/size/order_field/order_direction paginate sell totals only; buy totals return the largest rows (up to 10000, sticker 5000).",
+      ].join(" "),
+      inputSchema: {
+        format,
+        side,
+        group_by: z.enum(Object.keys(ACCOUNT_GROUPS) as [keyof typeof ACCOUNT_GROUPS]),
+        ...statsFilters,
+        subdimension: z
+          .enum(["country", "platform", "isp", "source_domain", "order", "sub_id", "day", "hour"])
+          .optional()
+          .describe("Second-level breakdown; order = per order; sub_id is sell-only"),
+        sub_size: subSize,
+        from: z.number().int().min(0).optional().describe("Sell only: row offset"),
+        size: z.number().int().min(1).max(1000).optional().describe("Sell only: rows per page"),
+        order_field: z.string().optional().describe("Sell only: earned, sold, hits, cpm or _key"),
+        order_direction: z.enum(["asc", "desc"]).optional().describe("Sell only"),
+        event_types: eventTypes,
+      },
+      annotations: READ,
+    },
+    (a) => {
+      const { format: fmt, side: sd, group_by, ...rest } = a;
+      if (sd === "buy" && rest.subdimension === "sub_id") return fail("sub_id grouping is available for sell orders only.");
+      if (sd === "sell" && rest.event_types) return fail(EVENT_TYPES_BUY_ONLY);
+      if (group_by === "order" && rest.subdimension === "order") return fail("subdimension=order needs a group_by other than order.");
+      if (isTimeBreakdownOfTime(group_by, rest.subdimension)) return fail(TIME_BY_TIME);
+      if (rest.subdimension === "order") rest.subdimension = `${sd}_order` as typeof rest.subdimension;
+      if (sd === "buy") {
+        delete rest.from;
+        delete rest.size;
+        delete rest.order_field;
+        delete rest.order_direction;
+      }
+      const segment = group_by === "order" ? `${sd}_orders` : ACCOUNT_GROUPS[group_by];
+      return run(() => api.post(`/v1/${fmt}/${sd}_stats/${segment}`, compact(rest)));
     },
   );
 

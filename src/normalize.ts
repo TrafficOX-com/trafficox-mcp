@@ -74,7 +74,7 @@ function isDatedRow(v: Json): boolean {
 }
 
 // Identifiers label a row; they are not data, so they never keep an empty row alive.
-const IDENTIFIER = new Set(["domain_id_numeric"]);
+const IDENTIFIER = new Set(["domain_id_numeric", "id_numeric"]);
 
 // A row is empty when every metric in it (nested `sub`, `by_format` …) is 0 or null.
 function isEmpty(v: Json): boolean {

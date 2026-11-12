@@ -20,7 +20,7 @@ Settings → Developer → Edit Config, add to `claude_desktop_config.json`:
   "mcpServers": {
     "trafficox": {
       "command": "npx",
-      "args": ["-y", "@trafficox/mcp@0.3.0"],
+      "args": ["-y", "@trafficox/mcp@0.4.0"],
       "env": { "TRAFFICOX_API_KEY": "your-api-key" }
     }
   }
@@ -32,7 +32,7 @@ Restart Claude Desktop.
 ### Claude Code
 
 ```bash
-claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.3.0
+claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.4.0
 ```
 
 ### Cursor
@@ -58,6 +58,7 @@ The version is pinned on purpose: your client runs exactly the release you revie
 **Orders** (`format`: popunder | sticker, `side`: buy | sell)
 - `list_orders`, `get_order`
 - `get_order_stats` — group by country, category, browser, isp, platform, domain, day, hour or sub_id, with filters and an optional second-level breakdown. Conversions are counted by the time they were received, traffic and spend by the time of the click, so the numbers match your conversion tracker for the same period
+- `get_account_stats` — the same statistics summed over all buy or sell orders of a format in one call (the panel's Total Buy / Total Sell Stats), with a per-order breakdown (`group_by=order` or `subdimension=order`)
 - `get_sub_id_report` — sell earnings by sub_id_1..3, cursor-paginated
 
 **RTB**
@@ -89,6 +90,7 @@ Every tool returns JSON with the API data under `data`:
 - Rows exist only where there is data; an empty period returns `{}` (or `[]`).
 - Ratios with a zero denominator (`cpm`, `cpc`, cost per conversion/click) are `0`.
 - Money totals are rounded to cents; `cpm`, `cpc`, cost-per and payout values to 4 decimals.
+- Buy rows carry `conversions_by_type` (conversions and revenue per event type: `signup`, `ftd`, …); `event_types` limits the conversion metrics to the given types.
 - Rows keyed by source domain carry `domain_id_numeric`, the value the `{domain_id_numeric}` URL macro sends (`null` for an unregistered source), so stats can be matched with your tracker.
 - If a response is too large for the assistant's context, rows are cut and a separate field says so:
   `{ "data": { … }, "truncated": { "shown": 556, "total": 1000, "hint": "…" } }`.
