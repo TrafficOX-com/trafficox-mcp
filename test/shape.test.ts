@@ -35,6 +35,14 @@ describe("fitResponse", () => {
     expect(out.truncated.total).toBe(500);
   });
 
+  it("cuts list `items` and keeps the paging fields", () => {
+    const data = { items: Array.from({ length: 500 }, () => row), total: 500, page: 1, per_page: 500, pages: 1, counts_by_state: { active: 500 } };
+    const out = JSON.parse(fitResponse(data, 2000));
+    expect(out.data.items.length).toBe(out.truncated.shown);
+    expect(out.truncated.total).toBe(500);
+    expect(out.data).toMatchObject({ total: 500, page: 1, counts_by_state: { active: 500 } });
+  });
+
   it("uses as many rows as fit", () => {
     const data = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`d${i}.com`, row]));
     const out = JSON.parse(fitResponse(data, 2000));

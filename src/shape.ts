@@ -4,7 +4,8 @@
 // inside the rows themselves.
 export const MAX_RESPONSE_CHARS = 60_000;
 
-const HINT = "Rows were cut to fit the model context. Narrow filters or the date range, or page with from/size where supported.";
+const HINT =
+  "Rows were cut to fit the model context. Narrow filters or the date range, or page with from/size (page/per_page for lists) where supported.";
 
 export type Truncated = { shown: number; total: number; hint: string };
 
@@ -44,6 +45,12 @@ function rowsOf(data: unknown): Rows | null {
   if (Array.isArray(obj.data)) {
     const list = obj.data;
     return { total: list.length, take: (n) => ({ ...obj, data: list.slice(0, n) }) };
+  }
+
+  // { items: [...], total, page, … } (list_orders, list_rtb_feeds)
+  if (Array.isArray(obj.items)) {
+    const list = obj.items;
+    return { total: list.length, take: (n) => ({ ...obj, items: list.slice(0, n) }) };
   }
 
   // Keyed stats map: { "US": {...}, "DE": {...} }
