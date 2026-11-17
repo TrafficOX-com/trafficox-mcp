@@ -24,7 +24,7 @@ const statsFilters = {
   date_start: z.string().optional().describe(`Range start. ${dateNote}`),
   date_end: z.string().optional().describe(`Range end. ${dateEndNote} ${dateNote}`),
   countries: strings("ISO country codes, e.g. [\"US\", \"DE\"]"),
-  categories: strings("Traffic category IDs, as listed by get_filter_values"),
+  categories: strings("Category names, e.g. [\"Multiniche\"] — as listed by get_filter_values and used as group_by=category keys (IDs match nothing)"),
   desktop_os: strings("Desktop OS names"),
   mobile_os: strings("Mobile OS names"),
   desktop_browsers: strings("Desktop browser names"),
@@ -97,6 +97,21 @@ const ACCOUNT_GROUPS = {
 const EVENT_TYPES_BUY_ONLY = "event_types filters buy conversions; sell statistics have none.";
 
 const READ = { readOnlyHint: true, openWorldHint: true } as const;
+
+// /v1/filters lists categories as IDs, but stats keys and the `categories` filter use names
+// (ES stores names). Show names; `category_names` (id → name) arrived with admin#457.
+function filterValues(raw: Record<string, unknown>) {
+  const { category_names: map, ...rest } = raw;
+  if (map && typeof map === "object" && Array.isArray(rest.categories)) {
+    const names = map as Record<string, string>;
+    return { ...rest, categories: rest.categories.map((id) => names[String(id)] ?? id) };
+  }
+  return {
+    ...rest,
+    categories_note:
+      "This API version lists categories by ID; filters need names. Take names from group_by=category stats keys.",
+  };
+}
 
 // List tools: the API returns every record, the MCP filters and pages.
 const listParams = (states: [string, ...string[]]) => ({
@@ -212,10 +227,10 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     {
       title: "Filter values",
       description:
-        "Valid values for stats filters: countries, categories, desktop/mobile OS, desktop/mobile browsers, platform. Call this before filtering if unsure of exact spelling.",
+        "Valid values for stats filters: countries, categories (names), desktop/mobile OS, desktop/mobile browsers, platform. Call this before filtering if unsure of exact spelling.",
       annotations: READ,
     },
-    () => run(() => api.get("/v1/filters")),
+    () => run(async () => filterValues((await api.get("/v1/filters")) as Record<string, unknown>)),
   );
 
   // ── Orders ──────────────────────────────────────────
