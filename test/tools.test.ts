@@ -105,6 +105,36 @@ describe("transport", () => {
   });
 });
 
+describe("filter values", () => {
+  it("lists categories by name using category_names", async () => {
+    reply = {
+      status: 200,
+      body: {
+        countries: ["US"],
+        categories: ["687e032dfe8", "687e032afd5", "unknownid"],
+        category_names: { "687e032dfe8": "Multiniche", "687e032afd5": "General" },
+      },
+    };
+    const res = JSON.parse((await call("get_filter_values")).text);
+    expect(res.data).toEqual({ countries: ["US"], categories: ["Multiniche", "General", "unknownid"] });
+  });
+
+  it("keeps IDs with a note when the API has no category_names yet", async () => {
+    reply = { status: 200, body: { countries: ["US"], categories: ["687e032dfe8"] } };
+    const res = JSON.parse((await call("get_filter_values")).text);
+    expect(res.data.categories).toEqual(["687e032dfe8"]);
+    expect(res.data.categories_note).toMatch(/names/);
+  });
+
+  it("tells the model the categories filter takes names", async () => {
+    const { tools } = await client.listTools();
+    const stats = tools.find((t) => t.name === "get_order_stats")!;
+    const desc = (stats.inputSchema.properties as Record<string, { description?: string }>).categories.description;
+    expect(desc).toMatch(/names/i);
+    expect(desc).not.toMatch(/^Traffic category IDs/);
+  });
+});
+
 describe("orders", () => {
   it("routes list/get by format and side", async () => {
     await call("list_orders", { format: "sticker", side: "sell" });

@@ -53,7 +53,7 @@ The version is pinned on purpose: your client runs exactly the release you revie
 **Account**
 - `get_account` — email, username, balance
 - `get_balance_stats` — daily earned/spent
-- `get_filter_values` — valid countries, categories, OS, browsers for filters (categories are category IDs)
+- `get_filter_values` — valid countries, categories (names), OS, browsers for filters
 
 **Orders** (`format`: popunder | sticker, `side`: buy | sell)
 - `list_orders` — filter by `state` and `search`, paged (see [Lists](#lists)); `get_order`
@@ -138,7 +138,7 @@ Every tool returns JSON with the API data under `data`:
 - Ratios with a zero denominator (`cpm`, `cpc`, cost per conversion/click) are `0`.
 - Money totals are rounded to cents; `cpm`, `cpc`, cost-per and payout values to 4 decimals.
 - Buy rows carry `conversions_by_type` (conversions and revenue per event type: `signup`, `ftd`, …); `event_types` limits the conversion metrics to the given types.
-- Rows of `get_account_stats` keyed by order carry the order `name`; RTB stats split by feed carry the feed `name`. Stats grouped by category are keyed by category ID: the public API has no list of category names.
+- Rows of `get_account_stats` keyed by order carry the order `name`; RTB stats split by feed carry the feed `name`. Stats grouped by category are keyed by category name; the `categories` filter takes the same names.
 - Rows keyed by source domain carry `domain_id_numeric`, the value the `{domain_id_numeric}` URL macro sends (`null` for an unregistered source), so stats can be matched with your tracker.
 - If a response is too large for the assistant's context, rows are cut and a separate field says so:
   `{ "data": { … }, "truncated": { "shown": 556, "total": 1000, "hint": "…" } }`.
