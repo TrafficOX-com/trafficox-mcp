@@ -2,7 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ApiError, TrafficoxClient } from "./client.js";
+import { MAX_PER_PAGE, pageList } from "./list.js";
 import { normalize } from "./normalize.js";
+import { addDomainsPreview, APPLY, createFilterPreview, removeDomainsPreview, statePreview } from "./preview.js";
 import { fitResponse } from "./shape.js";
 
 const format = z.enum(["popunder", "sticker"]).describe("Ad format");
@@ -22,7 +24,7 @@ const statsFilters = {
   date_start: z.string().optional().describe(`Range start. ${dateNote}`),
   date_end: z.string().optional().describe(`Range end. ${dateEndNote} ${dateNote}`),
   countries: strings("ISO country codes, e.g. [\"US\", \"DE\"]"),
-  categories: strings("Traffic categories"),
+  categories: strings("Traffic category IDs, as listed by get_filter_values"),
   desktop_os: strings("Desktop OS names"),
   mobile_os: strings("Mobile OS names"),
   desktop_browsers: strings("Desktop browser names"),
@@ -96,6 +98,24 @@ const EVENT_TYPES_BUY_ONLY = "event_types filters buy conversions; sell statisti
 
 const READ = { readOnlyHint: true, openWorldHint: true } as const;
 
+// List tools: the API returns every record, the MCP filters and pages.
+const listParams = (states: [string, ...string[]]) => ({
+  state: z.enum(states).optional().describe("Only records in this state"),
+  search: z.string().optional().describe("Case-insensitive substring of the name; an exact id or id_numeric also matches"),
+  page: z.number().int().min(1).optional().describe("Page number (default 1)"),
+  per_page: z.number().int().min(1).max(MAX_PER_PAGE).optional().describe(`Records per page (default 50, max ${MAX_PER_PAGE})`),
+});
+const LIST_NOTE =
+  "Returns { items, total, page, per_page, pages, counts_by_state }: total and pages count the filtered list, counts_by_state counts every record of the account regardless of filters.";
+
+// Write tools: preview first, write only with confirm: true.
+const confirm = z
+  .boolean()
+  .optional()
+  .describe("true applies the change. Omit to get a preview; set only after the user has seen the preview and agreed.");
+const CONFIRM_NOTE =
+  "Two steps: without confirm=true NOTHING is changed — the tool only returns a preview of what would happen. Show the preview to the user and call again with confirm=true only after the user explicitly agrees.";
+
 const TIME_BY_TIME = "day/hour subdimension needs a non-time group_by (e.g. group_by=country, subdimension=day).";
 
 function isTimeBreakdownOfTime(groupBy: string, subdimension: string | undefined) {
@@ -106,6 +126,38 @@ type Body = Record<string, unknown>;
 
 function compact(obj: Body): Body {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+}
+
+// Without confirm, a write tool answers this instead of writing.
+function preview(build: () => unknown): Promise<CallToolResult> {
+  return run(async () => ({ preview: await build(), apply: APPLY }));
+}
+
+// Adds the feed name to every `sub` row keyed by a feed id (subdimension=feed).
+// Enrichment never fails the call: without the feed list the rows go out unnamed.
+async function withFeedNames(rows: unknown, loadFeeds: () => Promise<unknown>): Promise<unknown> {
+  if (!rows || typeof rows !== "object" || Array.isArray(rows)) return rows;
+  let feeds: unknown;
+  try {
+    feeds = await loadFeeds();
+  } catch {
+    return rows;
+  }
+  if (!Array.isArray(feeds)) return rows;
+  const names = new Map<string, unknown>();
+  for (const f of feeds as Record<string, unknown>[]) {
+    const name = f.display_name ?? f.name ?? null;
+    names.set(String(f.id), name);
+    if (f.id_numeric !== undefined && f.id_numeric !== null) names.set(String(f.id_numeric), name);
+  }
+  for (const row of Object.values(rows as Record<string, unknown>)) {
+    const sub = (row as Record<string, unknown> | null)?.sub;
+    if (!sub || typeof sub !== "object" || Array.isArray(sub)) continue;
+    for (const [key, subRow] of Object.entries(sub)) {
+      if (subRow && typeof subRow === "object") (sub as Record<string, unknown>)[key] = { ...subRow, name: names.get(key) ?? null };
+    }
+  }
+  return rows;
 }
 
 function ok(data: unknown): CallToolResult {
@@ -172,11 +224,21 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     "list_orders",
     {
       title: "List orders",
-      description: "All buy orders (campaigns) or sell orders (placements) of the account for one ad format.",
-      inputSchema: { format, side },
+      description: [
+        "Buy orders (campaigns) or sell orders (placements) of the account for one ad format, filtered by state and name, paginated.",
+        LIST_NOTE,
+      ].join(" "),
+      inputSchema: {
+        format,
+        side,
+        ...listParams(["active", "paused", "pending", "suspended", "finished"]),
+      },
       annotations: READ,
     },
-    (a) => run(() => api.get(`/v1/${a.format}/${a.side}_orders`)),
+    (a) => {
+      const { format: fmt, side: sd, ...query } = a;
+      return run(async () => pageList(await api.get(`/v1/${fmt}/${sd}_orders`), query));
+    },
   );
 
   server.registerTool(
@@ -330,11 +392,17 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     "list_rtb_feeds",
     {
       title: "List RTB feeds",
-      description: "RTB demand feeds (DSP endpoints) of the account for one format, with state.",
-      inputSchema: { format },
+      description: [
+        "RTB demand feeds (DSP endpoints) of the account for one format, filtered by state and name, paginated.",
+        LIST_NOTE,
+      ].join(" "),
+      inputSchema: { format, ...listParams(["active", "paused"]) },
       annotations: READ,
     },
-    (a) => run(() => api.get(`/v1/${a.format}/rtb_feeds`)),
+    (a) => {
+      const { format: fmt, ...query } = a;
+      return run(async () => pageList(await api.get(`/v1/${fmt}/rtb_feeds`), query));
+    },
   );
 
   server.registerTool(
@@ -357,7 +425,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
         "Terms groupings return 10 rows unless `size` is set.",
         subdimensionNote,
         domainIdNote,
-        "`feed` splits rows per RTB feed (popunder account-level only).",
+        "`feed` splits rows per RTB feed (popunder account-level only); feed sub rows carry the feed `name` (null for a feed no longer listed).",
       ].join(" "),
       inputSchema: {
         format,
@@ -379,6 +447,9 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       if (feed_id) path = `/v1/${fmt}/rtb_feeds/${enc(feed_id)}/stats/${segment}`;
       // popunder account-level RTB stats live at the unprefixed /v1/rtb_stats
       else path = fmt === "popunder" ? `/v1/rtb_stats/${segment}` : `/v1/${fmt}/rtb_stats/${segment}`;
+      if (rest.subdimension === "feed") {
+        return run(async () => withFeedNames(await api.post(path, compact(rest)), () => api.get(`/v1/${fmt}/rtb_feeds`)));
+      }
       return run(() => api.post(path, compact(rest)));
     },
   );
@@ -459,70 +530,110 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
 
   // ── Actions ─────────────────────────────────────────
   // Only reversible toggles and domain-list edits. Bid price and order
-  // settings stay in the dashboard.
+  // settings stay in the dashboard. Each one previews until confirm: true.
 
   server.registerTool(
     "set_buy_order_state",
     {
       title: "Start / pause buy order",
-      description:
+      description: [
         "Start (active) or pause (paused) a popunder buy order. Starting it resumes buying traffic and spending balance.",
-      inputSchema: { id: id("Popunder buy order"), state: z.enum(["active", "paused"]) },
+        CONFIRM_NOTE,
+        "The preview shows the order name, its current state and the new state.",
+      ].join(" "),
+      inputSchema: { id: id("Popunder buy order"), state: z.enum(["active", "paused"]), confirm },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    (a) => run(() => api.post(`/v1/popunder/buy_orders/${enc(a.id)}/${a.state === "active" ? "play" : "pause"}`)),
+    (a) => {
+      const path = `/v1/popunder/buy_orders/${enc(a.id)}`;
+      if (!a.confirm) {
+        return preview(async () => statePreview("set_buy_order_state", (await api.get(path)) as Record<string, unknown>, a.state, "order"));
+      }
+      return run(() => api.post(`${path}/${a.state === "active" ? "play" : "pause"}`));
+    },
   );
 
   server.registerTool(
     "set_rtb_feed_state",
     {
       title: "Start / pause RTB feed",
-      description:
+      description: [
         "Start (active) or pause (paused) an RTB demand feed; bidding changes within ~10 seconds. Account managers are notified.",
-      inputSchema: { format, id: id("Feed"), state: z.enum(["active", "paused"]) },
+        CONFIRM_NOTE,
+        "The preview shows the feed name, its current state and the new state.",
+      ].join(" "),
+      inputSchema: { format, id: id("Feed"), state: z.enum(["active", "paused"]), confirm },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    (a) =>
-      run(() => api.post(`/v1/${a.format}/rtb_feeds/${enc(a.id)}/${a.state === "active" ? "play" : "pause"}`)),
+    (a) => {
+      const path = `/v1/${a.format}/rtb_feeds/${enc(a.id)}`;
+      if (!a.confirm) {
+        return preview(async () => statePreview("set_rtb_feed_state", (await api.get(path)) as Record<string, unknown>, a.state, "feed"));
+      }
+      return run(() => api.post(`${path}/${a.state === "active" ? "play" : "pause"}`));
+    },
   );
 
   server.registerTool(
     "create_domain_filter",
     {
       title: "Create domain filter",
-      description:
+      description: [
         "Create a domain blacklist or whitelist. Invalid domains are skipped and listed in `rejected_domains`. Attach it to an order in the dashboard.",
+        CONFIRM_NOTE,
+        "The preview shows the filter that would be created.",
+      ].join(" "),
       inputSchema: {
         name: z.string().min(1),
         list_type: z.enum(["blacklist", "whitelist"]),
         domains: z.array(z.string()).min(1).describe("Domain names, e.g. [\"example.com\"]"),
         ips: z.array(z.string()).optional().describe("IP addresses or CIDR blocks"),
+        confirm,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    (a) => run(() => api.post("/v1/domain_filters", { domain_filter: compact(a) })),
+    (a) => {
+      const { confirm: confirmed, ...input } = a;
+      if (!confirmed) return preview(() => createFilterPreview(input));
+      return run(() => api.post("/v1/domain_filters", { domain_filter: compact(input) }));
+    },
   );
 
   server.registerTool(
     "add_domains_to_filter",
     {
       title: "Add domains to filter",
-      description:
+      description: [
         "Append domains to a domain filter (max 15,000 per filter). Invalid domains are skipped and listed in `rejected_domains`. Takes effect on every order using this filter.",
-      inputSchema: { id: z.string().min(1).describe("Domain filter ID"), domains: z.array(z.string()).min(1) },
+        CONFIRM_NOTE,
+        "The preview shows the filter name, which domains are new or already present, and the size before and after.",
+      ].join(" "),
+      inputSchema: { id: z.string().min(1).describe("Domain filter ID"), domains: z.array(z.string()).min(1), confirm },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    (a) => run(() => api.post(`/v1/domain_filters/${enc(a.id)}/add_domains`, { domains: a.domains })),
+    (a) => {
+      const path = `/v1/domain_filters/${enc(a.id)}`;
+      if (!a.confirm) return preview(async () => addDomainsPreview((await api.get(path)) as Record<string, unknown>, a.domains));
+      return run(() => api.post(`${path}/add_domains`, { domains: a.domains }));
+    },
   );
 
   server.registerTool(
     "remove_domains_from_filter",
     {
       title: "Remove domains from filter",
-      description: "Remove domains from a domain filter. Takes effect on every order using this filter.",
-      inputSchema: { id: z.string().min(1).describe("Domain filter ID"), domains: z.array(z.string()).min(1) },
+      description: [
+        "Remove domains from a domain filter. Takes effect on every order using this filter.",
+        CONFIRM_NOTE,
+        "The preview shows the filter name, which domains are present or not, and the size before and after.",
+      ].join(" "),
+      inputSchema: { id: z.string().min(1).describe("Domain filter ID"), domains: z.array(z.string()).min(1), confirm },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    (a) => run(() => api.post(`/v1/domain_filters/${enc(a.id)}/remove_domains`, { domains: a.domains })),
+    (a) => {
+      const path = `/v1/domain_filters/${enc(a.id)}`;
+      if (!a.confirm) return preview(async () => removeDomainsPreview((await api.get(path)) as Record<string, unknown>, a.domains));
+      return run(() => api.post(`${path}/remove_domains`, { domains: a.domains }));
+    },
   );
 }
