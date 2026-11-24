@@ -238,6 +238,34 @@ describe("actions with confirm: true", () => {
     expect(last().url.pathname).toBe("/api/v1/domain_filters/f/remove_domains");
     expect(last().body).toEqual({ domains: ["a.com"] });
   });
+
+  it("sends domain_ids on add, remove and create", async () => {
+    await call("add_domains_to_filter", { id: "f", domain_ids: [123456], confirm: true });
+    expect(last().body).toEqual({ domain_ids: [123456] });
+    await call("remove_domains_from_filter", { id: "f", domains: ["a.com"], domain_ids: [123456], confirm: true });
+    expect(last().body).toEqual({ domains: ["a.com"], domain_ids: [123456] });
+    await call("create_domain_filter", { name: "Ids", list_type: "blacklist", domain_ids: [1], confirm: true });
+    expect(last().body).toEqual({ domain_filter: { name: "Ids", list_type: "blacklist", domain_ids: [1] } });
+  });
+
+  it("refuses a filter write with neither domains nor domain_ids, sending nothing", async () => {
+    for (const [name, args] of [
+      ["add_domains_to_filter", { id: "f", confirm: true }],
+      ["remove_domains_from_filter", { id: "f", domains: [], confirm: true }],
+      ["create_domain_filter", { name: "N", list_type: "blacklist", confirm: true }],
+    ] as const) {
+      const res = await call(name, args);
+      expect(res.isError, name).toBe(true);
+      expect(res.text).toBe("Pass domains, domain_ids or both.");
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a domain ID that is not a positive integer", async () => {
+    const res = await call("add_domains_to_filter", { id: "f", domain_ids: [0], confirm: true });
+    expect(res.isError).toBe(true);
+    expect(calls).toEqual([]);
+  });
 });
 
 describe("tool list", () => {
@@ -461,11 +489,44 @@ describe("write tools preview without confirm", () => {
     expect(p.new.not_shown).toBe(50);
   });
 
-  it("says so when the account hides domain names", async () => {
-    reply = { status: 200, body: { id: "f1", name: "Hidden", list_type: "blacklist", domain_ids: [1, 2], domains_count: 2 } };
+  const hidden = { id: "f1", name: "Hidden", list_type: "blacklist", domain_ids: [1, 2], domains_count: 2 };
+
+  it("warns that names are refused when the account sees sources only as IDs", async () => {
+    reply = { status: 200, body: hidden };
     const p = json(await call("add_domains_to_filter", { id: "f1", domains: ["a.com"] })).data.preview;
-    expect(p).toMatchObject({ domains_before: 2, submitted: 1 });
-    expect(p.note).toContain("hides source domain names");
+    expect(p).toMatchObject({ domains_before: 2, refused: true });
+    expect(p.note).toContain("Use domain_ids");
+  });
+
+  it("previews add_domains by domain_ids on a hidden account: new and already present", async () => {
+    reply = { status: 200, body: hidden };
+    const p = json(await call("add_domains_to_filter", { id: "f1", domain_ids: [2, 3, 3] })).data.preview;
+    expect(p.refused).toBeUndefined();
+    expect(p.new_domain_ids).toEqual({ count: 1, domain_ids: [3] });
+    expect(p.already_present_domain_ids).toEqual({ count: 1, domain_ids: [2] });
+    expect(p).toMatchObject({ domains_before: 2, domains_after: 3 });
+  });
+
+  it("previews add_domains with names and IDs together", async () => {
+    reply = { status: 200, body: { ...filter, domain_ids: [] } };
+    const p = json(await call("add_domains_to_filter", { id: "f1", domains: ["c.com"], domain_ids: [7] })).data.preview;
+    expect(p.new).toEqual({ count: 1, domains: ["c.com"] });
+    expect(p.new_domain_ids).toEqual({ count: 1, domain_ids: [7] });
+    expect(p).toMatchObject({ domains_before: 2, domains_after: 4 });
+  });
+
+  it("previews remove_domains by domain_ids", async () => {
+    reply = { status: 200, body: { ...filter, domains: ["a.com", "b.com", "id-src.com"], domain_ids: [5] } };
+    const p = json(await call("remove_domains_from_filter", { id: "f1", domain_ids: [5, 6] })).data.preview;
+    expect(p.removed_domain_ids).toEqual({ count: 1, domain_ids: [5] });
+    expect(p.not_present_domain_ids).toEqual({ count: 1, domain_ids: [6] });
+    expect(p).toMatchObject({ domains_before: 3, domains_after: 2 });
+    expect(p.domain_ids_note).toContain("removed by its ID only");
+  });
+
+  it("previews create_domain_filter with domain_ids", async () => {
+    const p = json(await call("create_domain_filter", { name: "N", list_type: "blacklist", domain_ids: [9, 9] })).data.preview;
+    expect(p.will_create.domain_ids).toEqual({ count: 1, domain_ids: [9] });
   });
 
   it("returns the lookup error and writes nothing when the record cannot be read", async () => {
