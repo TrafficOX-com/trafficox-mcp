@@ -116,6 +116,18 @@ const confirm = z
 const CONFIRM_NOTE =
   "Two steps: without confirm=true NOTHING is changed — the tool only returns a preview of what would happen. Show the preview to the user and call again with confirm=true only after the user explicitly agrees.";
 
+// Domain filter entries: names and/or numeric domain IDs.
+const domainIds = z
+  .array(z.number().int().positive())
+  .optional()
+  .describe(
+    "Numeric domain IDs — the {domain_id_numeric} URL macro value, domain_id_numeric in domain stats. Use them when the account sees sources only as IDs.",
+  );
+const ENTRIES_REQUIRED = "Pass domains, domain_ids or both.";
+const hasEntries = (a: { domains?: string[]; domain_ids?: number[] }) => Boolean(a.domains?.length || a.domain_ids?.length);
+const ENTRIES_NOTE =
+  "Takes domain names (`domains`), numeric domain IDs (`domain_ids`) or both. An account that sees sources only as Domain IDs must use domain_ids: the API refuses `domains` there. An unknown domain ID fails the whole request.";
+
 const TIME_BY_TIME = "day/hour subdimension needs a non-time group_by (e.g. group_by=country, subdimension=day).";
 
 function isTimeBreakdownOfTime(groupBy: string, subdimension: string | undefined) {
@@ -579,14 +591,16 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     {
       title: "Create domain filter",
       description: [
-        "Create a domain blacklist or whitelist. Invalid domains are skipped and listed in `rejected_domains`. Attach it to an order in the dashboard.",
+        "Create a domain blacklist or whitelist. Invalid domain names are skipped and listed in `rejected_domains`. Attach it to an order in the dashboard.",
+        ENTRIES_NOTE,
         CONFIRM_NOTE,
         "The preview shows the filter that would be created.",
       ].join(" "),
       inputSchema: {
         name: z.string().min(1),
         list_type: z.enum(["blacklist", "whitelist"]),
-        domains: z.array(z.string()).min(1).describe("Domain names, e.g. [\"example.com\"]"),
+        domains: z.array(z.string()).optional().describe("Domain names, e.g. [\"example.com\"]"),
+        domain_ids: domainIds,
         ips: z.array(z.string()).optional().describe("IP addresses or CIDR blocks"),
         confirm,
       },
@@ -594,6 +608,7 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     },
     (a) => {
       const { confirm: confirmed, ...input } = a;
+      if (!hasEntries(input)) return Promise.resolve(fail(ENTRIES_REQUIRED));
       if (!confirmed) return preview(() => createFilterPreview(input));
       return run(() => api.post("/v1/domain_filters", { domain_filter: compact(input) }));
     },
@@ -604,17 +619,26 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
     {
       title: "Add domains to filter",
       description: [
-        "Append domains to a domain filter (max 15,000 per filter). Invalid domains are skipped and listed in `rejected_domains`. Takes effect on every order using this filter.",
+        "Append domains to a domain filter (max 15,000 per filter). Invalid domain names are skipped and listed in `rejected_domains`. Takes effect on every order using this filter.",
+        ENTRIES_NOTE,
         CONFIRM_NOTE,
-        "The preview shows the filter name, which domains are new or already present, and the size before and after.",
+        "The preview shows the filter name, which domains and domain IDs are new or already present, and the size before and after.",
       ].join(" "),
-      inputSchema: { id: z.string().min(1).describe("Domain filter ID"), domains: z.array(z.string()).min(1), confirm },
+      inputSchema: {
+        id: z.string().min(1).describe("Domain filter ID"),
+        domains: z.array(z.string()).optional().describe("Domain names"),
+        domain_ids: domainIds,
+        confirm,
+      },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     (a) => {
+      if (!hasEntries(a)) return Promise.resolve(fail(ENTRIES_REQUIRED));
       const path = `/v1/domain_filters/${enc(a.id)}`;
-      if (!a.confirm) return preview(async () => addDomainsPreview((await api.get(path)) as Record<string, unknown>, a.domains));
-      return run(() => api.post(`${path}/add_domains`, { domains: a.domains }));
+      if (!a.confirm) {
+        return preview(async () => addDomainsPreview((await api.get(path)) as Record<string, unknown>, a.domains ?? [], a.domain_ids ?? []));
+      }
+      return run(() => api.post(`${path}/add_domains`, compact({ domains: a.domains, domain_ids: a.domain_ids })));
     },
   );
 
@@ -624,16 +648,26 @@ export function registerTools(server: McpServer, api: TrafficoxClient) {
       title: "Remove domains from filter",
       description: [
         "Remove domains from a domain filter. Takes effect on every order using this filter.",
+        ENTRIES_NOTE,
+        "A domain added by its domain ID is removed by that ID only.",
         CONFIRM_NOTE,
-        "The preview shows the filter name, which domains are present or not, and the size before and after.",
+        "The preview shows the filter name, which domains and domain IDs are present or not, and the size before and after.",
       ].join(" "),
-      inputSchema: { id: z.string().min(1).describe("Domain filter ID"), domains: z.array(z.string()).min(1), confirm },
+      inputSchema: {
+        id: z.string().min(1).describe("Domain filter ID"),
+        domains: z.array(z.string()).optional().describe("Domain names"),
+        domain_ids: domainIds,
+        confirm,
+      },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     (a) => {
+      if (!hasEntries(a)) return Promise.resolve(fail(ENTRIES_REQUIRED));
       const path = `/v1/domain_filters/${enc(a.id)}`;
-      if (!a.confirm) return preview(async () => removeDomainsPreview((await api.get(path)) as Record<string, unknown>, a.domains));
-      return run(() => api.post(`${path}/remove_domains`, { domains: a.domains }));
+      if (!a.confirm) {
+        return preview(async () => removeDomainsPreview((await api.get(path)) as Record<string, unknown>, a.domains ?? [], a.domain_ids ?? []));
+      }
+      return run(() => api.post(`${path}/remove_domains`, compact({ domains: a.domains, domain_ids: a.domain_ids })));
     },
   );
 }

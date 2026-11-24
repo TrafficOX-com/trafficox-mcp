@@ -19,6 +19,10 @@ function sample(list: string[]) {
   return { count: list.length, domains: list.slice(0, SHOWN), ...(list.length > SHOWN ? { not_shown: list.length - SHOWN } : {}) };
 }
 
+function sampleIds(list: number[]) {
+  return { count: list.length, domain_ids: list.slice(0, SHOWN), ...(list.length > SHOWN ? { not_shown: list.length - SHOWN } : {}) };
+}
+
 function label(record: Item) {
   return { id: record.id, id_numeric: record.id_numeric, name: record.display_name ?? record.name };
 }
@@ -41,7 +45,20 @@ function storedDomains(filter: Item): string[] | null {
   return Array.isArray(filter.domains) ? (filter.domains as string[]) : null;
 }
 
-const HIDDEN = "This account hides source domain names, so the filter's domains cannot be compared with the list.";
+function storedIds(filter: Item): number[] {
+  return Array.isArray(filter.domain_ids) ? (filter.domain_ids as unknown[]).map(Number) : [];
+}
+
+const HIDDEN = "This account sees source domains only as Domain IDs: the API refuses `domains` (422). Use domain_ids.";
+const ID_NOTE =
+  "Domain IDs are the {domain_id_numeric} macro value (domain_id_numeric in domain stats). The API refuses the whole request if an ID is unknown, and skips an ID whose domain is already in the filter (duplicate_domain_ids).";
+
+// New vs already present IDs, each ID once.
+function splitIds(filter: Item, ids: number[]) {
+  const have = new Set(storedIds(filter));
+  const unique = [...new Set(ids)];
+  return { fresh: unique.filter((id) => !have.has(id)), present: unique.filter((id) => have.has(id)) };
+}
 
 function splitInput(input: string[]) {
   const valid: string[] = [];
@@ -59,20 +76,30 @@ function splitInput(input: string[]) {
   return { valid, invalid };
 }
 
-export function addDomainsPreview(filter: Item, input: string[]) {
+export function addDomainsPreview(filter: Item, input: string[], ids: number[] = []) {
   const stored = storedDomains(filter);
   const before = stored ? stored.length : Number(filter.domains_count ?? 0);
   // The API refuses the whole request once stored + submitted (duplicates included) reaches the cap.
-  const within_limit = before + input.length < MAX_FILTER_DOMAINS;
+  const submitted = input.length + ids.length;
+  const within_limit = before + submitted < MAX_FILTER_DOMAINS;
   const limit = {
     max_domains: MAX_FILTER_DOMAINS,
     within_limit,
     ...(within_limit
       ? {}
-      : { limit_note: `Rejected as a whole: ${before} stored + ${input.length} submitted reaches the ${MAX_FILTER_DOMAINS} cap.` }),
+      : { limit_note: `Rejected as a whole: ${before} stored + ${submitted} submitted reaches the ${MAX_FILTER_DOMAINS} cap.` }),
   };
   const head = { action: "add_domains_to_filter", filter: filterLabel(filter), domains_before: before };
-  if (!stored) return { ...head, submitted: input.length, ...limit, note: HIDDEN };
+  const { fresh, present: idsPresent } = splitIds(filter, ids);
+  const idPart = ids.length ? { new_domain_ids: sampleIds(fresh), already_present_domain_ids: sampleIds(idsPresent), domain_ids_note: ID_NOTE } : {};
+  if (!stored) {
+    return {
+      ...head,
+      ...(input.length ? { refused: true, note: HIDDEN } : { domains_after: within_limit ? before + fresh.length : before, note: "Takes effect on every order that uses this filter." }),
+      ...limit,
+      ...idPart,
+    };
+  }
 
   const have = new Set(stored);
   const { valid, invalid } = splitInput(input);
@@ -80,40 +107,58 @@ export function addDomainsPreview(filter: Item, input: string[]) {
   const present = valid.filter((d) => have.has(d));
   return {
     ...head,
-    domains_after: within_limit ? before + added.length : before,
+    domains_after: within_limit ? before + added.length + fresh.length : before,
     ...limit,
-    new: sample(added),
-    already_present: sample(present),
+    ...(input.length ? { new: sample(added), already_present: sample(present) } : {}),
     ...(invalid.length ? { invalid: { ...sample(invalid), note: "Not valid domain names; the API skips them." } } : {}),
+    ...idPart,
     note: "Takes effect on every order that uses this filter.",
   };
 }
 
-export function removeDomainsPreview(filter: Item, input: string[]) {
+export function removeDomainsPreview(filter: Item, input: string[], ids: number[] = []) {
   const stored = storedDomains(filter);
   const head = { action: "remove_domains_from_filter", filter: filterLabel(filter) };
-  if (!stored) return { ...head, domains_before: Number(filter.domains_count ?? 0), submitted: input.length, note: HIDDEN };
+  const { fresh: idsAbsent, present: idsPresent } = splitIds(filter, ids);
+  const idPart = ids.length
+    ? { removed_domain_ids: sampleIds(idsPresent), not_present_domain_ids: sampleIds(idsAbsent) }
+    : {};
+  if (!stored) {
+    return {
+      ...head,
+      domains_before: Number(filter.domains_count ?? 0),
+      ...(input.length ? { refused: true, note: HIDDEN } : { note: "Takes effect on every order that uses this filter." }),
+      ...idPart,
+    };
+  }
 
   const have = new Set(stored);
   const unique = [...new Set(input)];
   const present = unique.filter((d) => have.has(d));
   const absent = unique.filter((d) => !have.has(d));
+  const viaIds = ids.length || storedIds(filter).length;
   return {
     ...head,
     domains_before: stored.length,
-    domains_after: stored.length - present.length,
+    domains_after: stored.length - present.length - idsPresent.length,
     max_domains: MAX_FILTER_DOMAINS,
-    removed: sample(present),
-    not_present: {
-      ...sample(absent),
-      ...(absent.length ? { note: "Only exact matches of the stored spelling are removed (see get_domain_filter)." } : {}),
-    },
+    ...(input.length
+      ? {
+          removed: sample(present),
+          not_present: {
+            ...sample(absent),
+            ...(absent.length ? { note: "Only exact matches of the stored spelling are removed (see get_domain_filter)." } : {}),
+          },
+        }
+      : {}),
+    ...idPart,
+    ...(viaIds ? { domain_ids_note: "A domain that is in the filter through a Domain ID is removed by its ID only, not by its name." } : {}),
     note: "Takes effect on every order that uses this filter.",
   };
 }
 
-export function createFilterPreview(a: { name: string; list_type: string; domains: string[]; ips?: string[] }) {
-  const { valid, invalid } = splitInput(a.domains);
+export function createFilterPreview(a: { name: string; list_type: string; domains?: string[]; domain_ids?: number[]; ips?: string[] }) {
+  const { valid, invalid } = splitInput(a.domains ?? []);
   return {
     action: "create_domain_filter",
     will_create: {
@@ -121,6 +166,7 @@ export function createFilterPreview(a: { name: string; list_type: string; domain
       list_type: a.list_type,
       domains: sample(valid),
       ...(invalid.length ? { invalid: { ...sample(invalid), note: "Not valid domain names; the API skips them." } } : {}),
+      ...(a.domain_ids?.length ? { domain_ids: sampleIds([...new Set(a.domain_ids)]), domain_ids_note: ID_NOTE } : {}),
       ...(a.ips?.length ? { ips: a.ips } : {}),
     },
     note: "The new filter is not attached to any order; attach it in the dashboard.",

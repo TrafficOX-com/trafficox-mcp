@@ -20,7 +20,7 @@ Settings → Developer → Edit Config, add to `claude_desktop_config.json`:
   "mcpServers": {
     "trafficox": {
       "command": "npx",
-      "args": ["-y", "@trafficox/mcp@0.5.0"],
+      "args": ["-y", "@trafficox/mcp@0.6.0"],
       "env": { "TRAFFICOX_API_KEY": "your-api-key" }
     }
   }
@@ -32,7 +32,7 @@ Restart Claude Desktop.
 ### Claude Code
 
 ```bash
-claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.5.0
+claude mcp add trafficox --env TRAFFICOX_API_KEY=your-api-key -- npx -y @trafficox/mcp@0.6.0
 ```
 
 ### Cursor
@@ -74,7 +74,7 @@ The version is pinned on purpose: your client runs exactly the release you revie
 **Actions** — these change your account, and only after you confirm (see [Confirming changes](#confirming-changes))
 - `set_buy_order_state` — start or pause a popunder buy order
 - `set_rtb_feed_state` — start or pause an RTB feed
-- `create_domain_filter`, `add_domains_to_filter`, `remove_domains_from_filter`
+- `create_domain_filter`, `add_domains_to_filter`, `remove_domains_from_filter` — by domain name (`domains`), by numeric domain ID (`domain_ids`, the `{domain_id_numeric}` macro value) or both. If your account sees sources only as domain IDs, use `domain_ids`. A domain added by its ID is removed by that ID
 
 Bid prices and other order settings are changed in the dashboard only.
 
@@ -98,7 +98,7 @@ Every action works in two steps. Called without `confirm: true` it changes nothi
 ```
 
 - start / pause: the order or feed name, its current state and the new one, with a note when it is already in that state;
-- add / remove domains: the filter name, which domains are new, already present or not present, the size before → after and the 15,000-domain cap;
+- add / remove domains: the filter name, which domains and domain IDs are new, already present or not present, the size before → after and the 15,000-domain cap;
 - create: the filter that would be created.
 
 The assistant shows you the preview and repeats the call with `confirm: true` only after you agree. Your MCP client may also ask you to approve the call itself.

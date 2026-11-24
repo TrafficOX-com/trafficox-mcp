@@ -3,7 +3,7 @@ import { TrafficoxClient } from "./client.js";
 import { registerPrompts } from "./prompts.js";
 import { registerTools } from "./tools.js";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 export function createServer(api: TrafficoxClient): McpServer {
   const server = new McpServer(
